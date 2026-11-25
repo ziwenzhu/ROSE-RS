@@ -1,14 +1,15 @@
 //! BAM and CRAM alignment reader, read/fragment filter kernel, and parallel `rayon` signal
 //! engine (`rose signal` / `rose run` / `rose multi`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use noodles::bam;
 use noodles::core::{Position, Region};
 use noodles::cram;
 use noodles::csi::{self, BinningIndex as _};
+use noodles::fasta;
 use noodles::sam::{
     self,
     alignment::record::{cigar::op::Kind, Cigar as _, Flags},
@@ -53,6 +54,8 @@ pub struct BamSignalConfig {
     pub seed: u64,
     /// Optional fixed bin width (`100_000`) to simultaneously collect bin counts (`--cn-correct`).
     pub collect_cn_bin_size: Option<u64>,
+    /// Reference FASTA (with `.fai`) used to decode CRAM input (`--reference`).
+    pub reference_fasta: Option<PathBuf>,
 }
 
 impl Default for BamSignalConfig {
@@ -71,6 +74,7 @@ impl Default for BamSignalConfig {
             downsample_fractions: Vec::new(),
             seed: 42,
             collect_cn_bin_size: None,
+            reference_fasta: None,
         }
     }
 }
@@ -243,10 +247,10 @@ pub fn compute_bam_signals(
     });
 
     let upstream_pad = match cfg.compat {
-        CompatMode::RoseLegacy => cfg.extend,
+        CompatMode::RoseLegacy => cfg.extend + 2,
         CompatMode::Clean => cfg.extend.max(cfg.max_fragment),
     };
-    let downstream_pad = cfg.extend;
+    let downstream_pad = cfg.extend + 2;
 
     // Estimate coalesced BGZF fetch-window count and span (64 KB BGZF blocks span ~65 kb+).
     // When > 512 disjoint BGZF seeks are required across the genome, per-chromosome contiguous
@@ -332,10 +336,10 @@ fn run_indexed_bam_queries(
     cfg: &BamSignalConfig,
 ) -> Result<BamSignalOutput, RoseIoError> {
     let upstream_pad = match cfg.compat {
-        CompatMode::RoseLegacy => cfg.extend,
+        CompatMode::RoseLegacy => cfg.extend + 2,
         CompatMode::Clean => cfg.extend.max(cfg.max_fragment),
     };
-    let downstream_pad = cfg.extend;
+    let downstream_pad = cfg.extend + 2;
 
     let contig_tasks: Vec<(&String, &Vec<(usize, Interval)>)> = by_contig.iter().collect();
     let per_contig_res: Result<Vec<_>, RoseIoError> = contig_tasks
@@ -395,19 +399,14 @@ fn run_indexed_bam_queries(
                     .map_err(|e| RoseIoError::io(bam_path, e))?;
 
                 let mut buckets: Vec<Vec<ReadSpan>> = vec![Vec::new(); win_regs.len()];
+                let win_max_ends = prefix_max_ends(win_regs);
                 for rec_res in query.records() {
                     let rec = rec_res.map_err(|e| RoseIoError::io(bam_path, e))?;
                     if let Some((span, is_se)) = decode_bam_record(&rec, cfg) {
                         saw_se = saw_se || is_se;
-                        let upper =
-                            win_regs.partition_point(|&(_, iv)| iv.start() < span.interval.end());
-                        for (b_idx, &(_, reg_iv)) in win_regs[..upper].iter().enumerate().rev() {
-                            if reg_iv.overlaps(span.interval) {
-                                buckets[b_idx].push(span.clone());
-                            } else if reg_iv.end() + 50_000 < span.interval.start() {
-                                break;
-                            }
-                        }
+                        for_each_overlapping(win_regs, &win_max_ends, span.interval, |b_idx| {
+                            buckets[b_idx].push(span.clone());
+                        });
                     }
                 }
 
@@ -588,6 +587,7 @@ fn stream_single_bam_contig(
     let mut raw_mapped_cnt = 0_u64;
     let mut saw_se = false;
     let mut overlapping_spans: Vec<Vec<ReadSpan>> = vec![Vec::new(); sorted_regs.len()];
+    let sorted_max_ends = prefix_max_ends(&sorted_regs);
 
     for rec_res in query.records() {
         let rec = rec_res.map_err(|e| RoseIoError::io(bam_path, e))?;
@@ -604,15 +604,9 @@ fn stream_single_bam_contig(
                     *slot += 1;
                 }
             }
-            // Binary-search regions whose `start < span.end`
-            let upper = sorted_regs.partition_point(|&(_, iv)| iv.start() < span.interval.end());
-            for (slot_idx, &(_, reg_iv)) in sorted_regs[..upper].iter().enumerate().rev() {
-                if reg_iv.overlaps(span.interval) {
-                    overlapping_spans[slot_idx].push(span.clone());
-                } else if reg_iv.end() + 50_000 < span.interval.start() {
-                    break;
-                }
-            }
+            for_each_overlapping(&sorted_regs, &sorted_max_ends, span.interval, |slot_idx| {
+                overlapping_spans[slot_idx].push(span.clone());
+            });
         }
     }
 
@@ -667,6 +661,7 @@ fn stream_sequential_file(
         }
     }
 
+    let max_ends_by_ref: Vec<Vec<u64>> = sorted_by_ref.iter().map(|r| prefix_max_ends(r)).collect();
     let mut filtered_cnt = 0_u64;
     let mut raw_mapped_cnt = 0_u64;
     let mut saw_se = false;
@@ -684,21 +679,20 @@ fn stream_sequential_file(
                 }
             }
         }
-        if let Some(r_list) = sorted_by_ref.get(ref_id) {
-            let upper = r_list.partition_point(|&(_, iv)| iv.start() < span.interval.end());
-            for (s_i, &(_, reg_iv)) in r_list[..upper].iter().enumerate().rev() {
-                if reg_iv.overlaps(span.interval) {
-                    spans_by_ref[ref_id][s_i].push(span.clone());
-                } else if reg_iv.end() + 50_000 < span.interval.start() {
-                    break;
-                }
-            }
+        if let (Some(r_list), Some(max_ends)) =
+            (sorted_by_ref.get(ref_id), max_ends_by_ref.get(ref_id))
+        {
+            for_each_overlapping(r_list, max_ends, span.interval, |s_i| {
+                spans_by_ref[ref_id][s_i].push(span.clone());
+            });
         }
     };
 
     if is_cram {
-        let mut reader = File::open(path)
-            .map(cram::io::Reader::new)
+        let repo = open_cram_reference(path, contigs, cfg)?;
+        let mut reader = cram::io::reader::Builder::default()
+            .set_reference_sequence_repository(repo)
+            .build_from_path(path)
             .map_err(|e| RoseIoError::io(path, e))?;
         let header = reader.read_header().map_err(|e| RoseIoError::io(path, e))?;
         for rec_res in reader.records(&header) {
@@ -773,6 +767,44 @@ fn stream_sequential_file(
         has_dup_pg,
         saw_se,
         cfg,
+    ))
+}
+
+/// Opens the `--reference` FASTA for CRAM decoding and checks that it covers every contig the CRAM
+/// header names, so a missing or mismatched reference is reported as an error instead of a panic
+/// inside the CRAM decoder.
+fn open_cram_reference(
+    cram_path: &Path,
+    contigs: &[(String, u64)],
+    cfg: &BamSignalConfig,
+) -> Result<fasta::Repository, RoseIoError> {
+    let Some(fa) = cfg.reference_fasta.as_deref() else {
+        return Err(RoseIoError::BinaryFormat {
+            path: cram_path.to_path_buf(),
+            message: "CRAM input needs its reference genome: pass --reference <genome.fa> \
+                      (indexed with `samtools faidx`)"
+                .to_owned(),
+        });
+    };
+    let mut fai_path = fa.as_os_str().to_owned();
+    fai_path.push(".fai");
+    let fai =
+        fasta::fai::fs::read(&fai_path).map_err(|e| RoseIoError::io(Path::new(&fai_path), e))?;
+    let names: HashSet<Vec<u8>> = fai.as_ref().iter().map(|r| r.name().to_vec()).collect();
+    if let Some((missing, _)) = contigs.iter().find(|(c, _)| !names.contains(c.as_bytes())) {
+        return Err(RoseIoError::BinaryFormat {
+            path: cram_path.to_path_buf(),
+            message: format!(
+                "reference '{}' has no sequence named '{missing}', which the CRAM header uses",
+                fa.display()
+            ),
+        });
+    }
+    let reader = fasta::io::indexed_reader::Builder::default()
+        .build_from_path(fa)
+        .map_err(|e| RoseIoError::io(fa, e))?;
+    Ok(fasta::Repository::new(
+        fasta::repository::adapters::IndexedReader::new(reader),
     ))
 }
 
@@ -883,11 +915,18 @@ fn decode_generic_record<R: sam::alignment::Record>(
     }
     .max(1);
 
-    let end0 = pos0 + read_len;
+    // Legacy ROSE (`ROSE_utils.py::readsToLoci`) builds each read as the closed locus
+    // `[POS, POS + len(SEQ)]` in 1-based coordinates, i.e. `len + 1` bases, before extension.
+    // On the legacy number line (where GFF coordinates are stored as-is), that is the half-open
+    // span `[POS, POS + len + 1)`.
+    let (read_start, read_end) = match cfg.compat {
+        CompatMode::Clean => (pos0, pos0 + read_len),
+        CompatMode::RoseLegacy => (pos_1b, pos_1b + read_len + 1),
+    };
     let (ext_start, ext_end) = if flags.is_reverse_complemented() {
-        (pos0.saturating_sub(cfg.extend), end0)
+        (read_start.saturating_sub(cfg.extend), read_end)
     } else {
-        (pos0, end0.saturating_add(cfg.extend))
+        (read_start, read_end.saturating_add(cfg.extend))
     };
     let iv = Interval::try_new("", ext_start, ext_end.max(ext_start + 1)).ok()?;
     Some((
@@ -897,6 +936,36 @@ fn decode_generic_record<R: sam::alignment::Record>(
         },
         !flags.is_segmented(),
     ))
+}
+
+/// Running maximum of region ends over regions sorted by start, so an overlap scan can stop
+/// exactly when no earlier region can still reach a read (nested regions are handled correctly).
+fn prefix_max_ends(sorted: &[(usize, Interval)]) -> Vec<u64> {
+    let mut out = Vec::with_capacity(sorted.len());
+    let mut cur = 0_u64;
+    for &(_, iv) in sorted {
+        cur = cur.max(iv.end());
+        out.push(cur);
+    }
+    out
+}
+
+/// Calls `f(slot)` for every region in `sorted` (sorted by start) overlapping `span`.
+fn for_each_overlapping(
+    sorted: &[(usize, Interval)],
+    max_ends: &[u64],
+    span: Interval,
+    mut f: impl FnMut(usize),
+) {
+    let upper = sorted.partition_point(|&(_, iv)| iv.start() < span.end());
+    for slot in (0..upper).rev() {
+        if max_ends[slot] <= span.start() {
+            break;
+        }
+        if sorted[slot].1.overlaps(span) {
+            f(slot);
+        }
+    }
 }
 
 fn merge_nearby_windows(wins: &[Interval], max_gap: u64) -> Vec<Interval> {
@@ -980,5 +1049,31 @@ fn finalize_signal_output(
         effective_mmr: eff_mmr,
         has_duplicate_marker_pg,
         saw_single_end_reads,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn iv(s: u64, e: u64) -> Interval {
+        Interval::try_new("t", s, e).expect("valid interval")
+    }
+
+    #[test]
+    fn overlap_scan_sees_long_region_past_a_nested_short_one() {
+        // Sorted by start: a 200 kb region, then a short region nested near its start.
+        let regs = vec![(0, iv(0, 200_000)), (1, iv(10_000, 20_000))];
+        let max_ends = prefix_max_ends(&regs);
+        let mut hits = Vec::new();
+        for_each_overlapping(&regs, &max_ends, iv(150_000, 150_250), |s| hits.push(s));
+        assert_eq!(hits, vec![0]);
+        hits.clear();
+        for_each_overlapping(&regs, &max_ends, iv(15_000, 15_100), |s| hits.push(s));
+        hits.sort_unstable();
+        assert_eq!(hits, vec![0, 1]);
+        hits.clear();
+        for_each_overlapping(&regs, &max_ends, iv(300_000, 300_100), |s| hits.push(s));
+        assert!(hits.is_empty());
     }
 }

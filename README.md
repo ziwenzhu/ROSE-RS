@@ -15,7 +15,7 @@
 | **Tangent cutoff** | R `stats::optimize` Brent search on a discontinuous step function | Exact $O(N)$ chord-tangent scan with rightmost tie-breaking (`--cutoff rose-compat` retains exact R Brent solver) |
 | **Gene mapping & BED tracks** | Drops IDs starting with `'R'`; `append=TRUE` duplicates Gateway BED on rerun; invalid `> 1000` BED scores | Typed schema writers, atomic temp-file-and-rename (`AtomicWriter`), valid `0..=1000` UCSC BED scores |
 | **Stitching & scale sensitivity** | Hardcoded 12.5 kb empirical mouse ESC window; re-evaluating requires full BAM re-runs | **Zero-I/O piecewise peak + gap engine** (`0..=25 kb` sensitivity report `*_Stitch_sensitivity.tsv` on every run) + signal-blind **`--stitch auto`** with `[2 kb, 25 kb]` clamp & `12.5 kb` fallback |
-| **Legacy parity** | Reference implementation | `--compat rose` reproduces legacy ROSE 0.1 stitching, `idxstats` MMR, 4-decimal rounding, and R Brent cutoff |
+| **Legacy parity** | Reference implementation | `--compat rose` reproduces legacy ROSE 0.1 stitching, read/region counting, 4-decimal rounding, and R Brent cutoff (checked against an independent re-implementation in `tests/golden/`); MMR comes from the `.bai` index rather than `samtools flagstat` |
 
 ---
 
@@ -25,7 +25,7 @@
 ROSE-RS/
 ├── Cargo.toml                  # Workspace config & strict lints (#![forbid(unsafe_code)])
 ├── SKILL.md                    # Portable AI Agent Skill specification (Claude Code, Codex, Copilot, Antigravity)
-├── .agents/skills/rose-rs/     # Workspace auto-discovery skill directory
+├── tests/golden/               # Synthetic fixture + independent ROSE-rules reference used by the golden tests
 └── crates/
     ├── rose-core/              # Pure I/O-free algorithms: intervals, TSS, stitch, stitch_sweep, signal, cutoff, genes, stability, CN, multi
     ├── rose-io/                # BAM/CRAM (noodles), pure-Rust BigWig v4, BED/narrowPeak/broadPeak/GFF/GTF/refGene, atomic TSV/BED writers
@@ -129,7 +129,7 @@ rose run \
 |---|---|
 | `rose run` | Execute the complete `stitch -> signal -> call -> genes` pipeline in memory with SVG/PNG plots and `run.json` provenance |
 | `rose stitch` | Filter blacklisted/promoter-contained constituents, stitch within `--stitch` (12.5 kb), and disaggregate `> --max-tss-genes` spans |
-| `rose signal` | Quantify BAM, CRAM, or BigWig signal across regions into `*_ENHANCER_REGION_MAP.txt` |
+| `rose signal` | Quantify BAM, CRAM (`--reference genome.fa` required), or BigWig signal across regions into `*_ENHANCER_REGION_MAP.txt` |
 | `rose call` | Compute the super-enhancer tangent cutoff, ranked enhancer tables, valid `0..=1000` BED tracks, and hockey-stick plots |
 | `rose genes` | Map ranked enhancers to overlapping, proximal (`±50 kb`), and closest genes (`ENHANCER_TO_GENE` and `GENE_TO_ENHANCER`) |
 | `rose multi` | Pool consensus peaks across samples, normalize via DESeq2 median-of-ratios (`>= 80%` positive subset), call replicate consensus, and label `gained`/`lost`/`shared` |
@@ -149,21 +149,15 @@ Measured on 8 threads (`target/release/rose`, pure-Rust `noodles` + `zlib-rs`, z
 | **ChIP-seq + Input + `--cn-correct` + `--stability 200`** | `30M` ChIP + `30M` Input (`60M` reads), `20,020` peaks | **`9.55 s`** | **`79.9 MiB`** |
 | **`rose multi` 4-sample cohort (`-s auto`)** | `4 × (30M ChIP + 30M Input)` (`240M` reads) | **`35.18 s` (`8.80 s / sample`)** | **`112.9 MiB`** |
 
-Micro-benchmarks (`criterion`, single thread):
-- `signal_floor0_5k_reads`: **`4.09 µs`**
-- `signal_floor1_diffarray_5k_reads`: **`26.78 µs`**
-- `cutoff_exact_15k`: **`96.63 µs`**
-- `stitch_20k_peaks`: **`27.64 ms`**
-
 ---
 
 ## AI Agent Skill (`SKILL.md`)
 
-`rose-rs` ships with a ready-to-use Agent Skill specification at `SKILL.md` (and `.agents/skills/rose-rs/SKILL.md` for automatic workspace discovery in Antigravity, Codex, Claude Code, GitHub Copilot CLI, Cursor, and Amp). To install globally across coding agents:
+`rose-rs` ships with an Agent Skill specification at `SKILL.md`. To install it globally across coding agents:
 
 ```bash
 # Copy into your global agent skills directory (or run `npx skills add <repo>`)
-cp -r .agents/skills/rose-rs ~/.agents/skills/rose-rs
+mkdir -p ~/.agents/skills/rose-rs && cp SKILL.md ~/.agents/skills/rose-rs/
 ```
 
 ---

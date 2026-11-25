@@ -212,7 +212,9 @@ pub(crate) fn stitch_prepared(
                     for tx in tss_hits {
                         distinct_genes.insert(tx.gene_name.as_str());
                     }
-                    distinct_genes.len() > cfg.max_tss_genes && cluster.len() > 1
+                    // ROSE (`ROSE_main.py:104-113`) also un-stitches single-peak regions that span
+                    // too many genes, which renames them back to the original peak ID.
+                    distinct_genes.len() > cfg.max_tss_genes
                 } else {
                     false
                 }
@@ -438,4 +440,82 @@ pub fn merge_consensus_peaks(
         }
     }
     Ok(consensus)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tss::Transcript;
+    use crate::types::GeneBiotypeFilter;
+
+    fn peak(id: &str, s: u64, e: u64) -> Constituent {
+        Constituent {
+            id: id.to_owned(),
+            chrom: "chr1".to_owned(),
+            interval: Interval::try_new("chr1", s, e).expect("valid"),
+            strand: Strand::Unstranded,
+            score: None,
+        }
+    }
+
+    fn gene(tx: &str, name: &str, tss: u64) -> Transcript {
+        Transcript {
+            transcript_id: tx.to_owned(),
+            gene_name: name.to_owned(),
+            chrom: "chr1".to_owned(),
+            strand: Strand::Forward,
+            interval: Interval::try_new("chr1", tss, tss + 500).expect("valid"),
+            is_protein_coding: true,
+        }
+    }
+
+    #[test]
+    fn stitches_within_distance_and_names_by_leftmost_peak() {
+        let peaks = [
+            peak("b", 5_000, 6_000),
+            peak("a", 0, 1_000),
+            peak("c", 40_000, 41_000),
+        ];
+        let cfg = StitchConfig::default();
+        let (regions, _) =
+            stitch_constituents(&peaks, None, &BTreeMap::new(), &cfg).expect("stitch");
+        let ids: HashSet<&str> = regions.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains("2_a_lociStitched"));
+        assert!(ids.contains("1_c_lociStitched"));
+    }
+
+    #[test]
+    fn single_peak_spanning_many_genes_is_unstitched_like_rose() {
+        // One broad peak covering three distinct TSSs: ROSE replaces it with the original peak ID.
+        let peaks = [
+            peak("broad", 10_000, 30_000),
+            peak("lone", 100_000, 101_000),
+        ];
+        let annot = AnnotationIndex::build(
+            vec![
+                gene("t1", "G1", 12_000),
+                gene("t2", "G2", 18_000),
+                gene("t3", "G3", 26_000),
+            ],
+            GeneBiotypeFilter::All,
+            CompatMode::Clean,
+        );
+        let cfg = StitchConfig {
+            tss_window: 100,
+            ..StitchConfig::default()
+        };
+        let (regions, stats) =
+            stitch_constituents(&peaks, Some(&annot), &BTreeMap::new(), &cfg).expect("stitch");
+        let ids: HashSet<&str> = regions.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains("broad"), "got {ids:?}");
+        assert!(ids.contains("1_lone_lociStitched"));
+        assert_eq!(stats.disaggregated_clusters, 1);
+    }
+
+    #[test]
+    fn duplicate_ids_are_rejected() {
+        let peaks = [peak("x", 0, 10), peak("x", 100, 110)];
+        let err = stitch_constituents(&peaks, None, &BTreeMap::new(), &StitchConfig::default());
+        assert!(matches!(err, Err(RoseCoreError::DuplicateRegionId { .. })));
+    }
 }

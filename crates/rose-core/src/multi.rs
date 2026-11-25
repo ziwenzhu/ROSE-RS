@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cutoff::{call_super_enhancers, CallConfig, CallResult, RegionSignal};
 use crate::error::RoseCoreError;
-use crate::types::StitchedRegion;
+use crate::types::{ControlSubtraction, StitchedRegion};
 
 /// Metadata for one sample in a `rose multi` cohort sheet.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -166,7 +166,12 @@ pub fn evaluate_multi_cohort(
     for s_idx in 0..n_samples {
         for r_idx in 0..n_regions {
             let it = &per_sample_signals[s_idx][r_idx];
-            let ctrl = it.ctrl_signal.unwrap_or(0.0);
+            // Follow the same control policy as calling (`--subtract-control`), so CUT&RUN
+            // size factors are not computed on IgG-subtracted signal the calls never see.
+            let ctrl = match call_cfg.subtract_control {
+                ControlSubtraction::On => it.ctrl_signal.unwrap_or(0.0),
+                ControlSubtraction::Off => 0.0,
+            };
             raw_matrix[r_idx][s_idx] = (it.treat_signal - ctrl).max(0.0);
         }
     }

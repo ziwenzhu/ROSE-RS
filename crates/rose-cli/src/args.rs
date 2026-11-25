@@ -258,6 +258,10 @@ pub struct SharedSignalOpts {
     #[arg(long, default_value_t = 0)]
     pub min_mapq: u8,
 
+    /// Reference genome FASTA (indexed with `samtools faidx`) used to decode CRAM input.
+    #[arg(long)]
+    pub reference: Option<PathBuf>,
+
     /// Excluded SAM bitwise flags (defaults to `3844` in clean mode, `4` in `--compat rose`).
     #[arg(long)]
     pub exclude_flags: Option<u16>,

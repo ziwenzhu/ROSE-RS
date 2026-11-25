@@ -68,6 +68,9 @@ impl SignalScratch {
         if reads.is_empty() {
             return 0;
         }
+        let Some(region) = counted_region(region, compat) else {
+            return 0;
+        };
         if floor == 0 {
             return reads.iter().map(|r| r.interval.overlap_len(region)).sum();
         }
@@ -96,16 +99,10 @@ impl SignalScratch {
         let mut sum = 0_u64;
         for &delta in &self.diff[..width] {
             depth += delta;
+            // Both modes follow `ROSE_bamToGFF.py:113`: bases with `depth > floor` contribute
+            // their full depth (not `depth - floor`).
             if depth > floor_i32 {
-                match compat {
-                    // Clean mode: subtract baseline floor (`depth - floor`) or step?
-                    // Note: ROSE_bamToGFF.py:113,135 sums FULL `depth` at bases where `depth > floor`!
-                    // Keeping identical mathematical definition across both modes ensures `--floor 1`
-                    // means "ignore singleton-depth bases, sum coverage where depth > floor".
-                    CompatMode::Clean | CompatMode::RoseLegacy => {
-                        sum += depth as u64;
-                    }
-                }
+                sum += depth as u64;
             }
         }
         sum
@@ -129,6 +126,9 @@ impl SignalScratch {
         if reads.is_empty() {
             return vec![0; k];
         }
+        let Some(region) = counted_region(region, compat) else {
+            return vec![0; k];
+        };
         if floor == 0 {
             let mut sums = vec![0_u64; k];
             for r in reads {
@@ -172,7 +172,6 @@ impl SignalScratch {
             }
         }
 
-        let _ = compat;
         let floor_i32 = floor as i32;
         let mut out = Vec::with_capacity(k);
         for td in &self.tier_diffs[..k] {
@@ -187,6 +186,19 @@ impl SignalScratch {
             out.push(sum);
         }
         out
+    }
+}
+
+/// Bases that are counted for `region`. Legacy ROSE (`ROSE_bamToGFF.py:115`) keeps only bases
+/// strictly inside the GFF locus (`start < x < end`), which on the legacy number line is
+/// `[start + 1, end)`. The density divisor stays `end - start`.
+#[must_use]
+#[inline]
+pub fn counted_region(region: Interval, compat: CompatMode) -> Option<Interval> {
+    match compat {
+        CompatMode::Clean => Some(region),
+        // A 1 bp locus has no interior bases; ROSE reports `NA` and later treats it as no signal.
+        CompatMode::RoseLegacy => Interval::try_new("", region.start() + 1, region.end()).ok(),
     }
 }
 
@@ -310,4 +322,66 @@ pub fn reconcile_chrom_names(
         });
     }
     Ok(mapping)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn iv(s: u64, e: u64) -> Interval {
+        Interval::try_new("t", s, e).expect("valid interval")
+    }
+
+    fn span(s: u64, e: u64) -> ReadSpan {
+        ReadSpan {
+            interval: iv(s, e),
+            subsample_hash: 0,
+        }
+    }
+
+    #[test]
+    fn legacy_counts_only_strict_interior_bases() {
+        // ROSE keeps bases `start < x < end`; a read covering the whole region adds width - 1.
+        let region = iv(100, 110);
+        let reads = [span(90, 120)];
+        let mut s = SignalScratch::new();
+        assert_eq!(
+            s.compute_region_bp_sum(region, &reads, 0, CompatMode::Clean),
+            10
+        );
+        assert_eq!(
+            s.compute_region_bp_sum(region, &reads, 0, CompatMode::RoseLegacy),
+            9
+        );
+        // With floor 1 the same rule applies to bases with depth > 1, which add full depth.
+        let two = [span(90, 120), span(90, 120)];
+        assert_eq!(
+            s.compute_region_bp_sum(region, &two, 1, CompatMode::Clean),
+            20
+        );
+        assert_eq!(
+            s.compute_region_bp_sum(region, &two, 1, CompatMode::RoseLegacy),
+            18
+        );
+    }
+
+    #[test]
+    fn legacy_one_bp_region_has_no_interior() {
+        let mut s = SignalScratch::new();
+        let reads = [span(0, 1000)];
+        assert_eq!(
+            s.compute_region_bp_sum(iv(100, 101), &reads, 0, CompatMode::RoseLegacy),
+            0
+        );
+        assert_eq!(
+            s.compute_multi_tier_bp_sums(
+                iv(100, 101),
+                &reads,
+                1,
+                &[0.5, 1.0],
+                CompatMode::RoseLegacy
+            ),
+            vec![0, 0]
+        );
+    }
 }
