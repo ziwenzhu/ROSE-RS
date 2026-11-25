@@ -11,7 +11,11 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.91"
 license = "MIT"
-repository = "https://github.com/zzw/rose-rs"
+repository = "https://github.com/ziwenzhu/ROSE-RS"
+homepage = "https://github.com/ziwenzhu/ROSE-RS"
+readme = "README.md"
+keywords = ["bioinformatics", "chip-seq", "super-enhancer", "rose", "genomics"]
+categories = ["science", "command-line-utilities"]
 
 [workspace.dependencies]
 rose-core = { path = "crates/rose-core" }

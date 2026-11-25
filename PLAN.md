@@ -5,8 +5,9 @@ tool, fixing the defects found in the review of
 [young_computation/rose](https://bitbucket.org/young_computation/rose) and adopting
 the useful ideas from [BoevaLab/LILY](https://github.com/BoevaLab/LILY).
 
-Working name: `rose-rs`. Nothing here has been built or measured yet; performance
-figures below are targets to validate, not results.
+Working name: `rose-rs`. This is the original design document; the implementation now
+exists in this repository. Performance figures below were the targets; measured results
+and the current test coverage are in `README.md` and `PORTING.md`.
 
 ## 1. Goals
 
