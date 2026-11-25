@@ -194,7 +194,8 @@ features grouped by `transcript_id`.
 - **Coverage accumulation:** With `--floor 0`, total coverage in `[region.start,
   region.end)` is the exact sum of clamped interval overlaps. With `--floor f`
   (`f >= 1`), increments `+1` / `-1` are written into a reusable per-thread
-  difference array, prefix-summed once, and summed as `max(0, depth - f)`.
+  difference array, prefix-summed once, and bases with `depth > f` contribute their full
+  depth, as in `ROSE_bamToGFF.py` (implemented this way in both modes).
 - **Normalisation:** Divide by `scale_factor` if supplied; otherwise divide by
   million post-filter units (`--norm-denom filtered`, where 1 paired-end fragment =
   1 unit and 1 single-end read = 1 unit) or by `.bai`/`.csi` `idxstats` mapped
