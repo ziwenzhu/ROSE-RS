@@ -1,4 +1,4 @@
-//! Command-line argument definitions (`clap` derive) matching `PLAN.md` Section 4.
+//! Command-line argument definitions (`clap` derive).
 
 use std::path::PathBuf;
 
