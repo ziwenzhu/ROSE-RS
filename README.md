@@ -145,7 +145,7 @@ Measured on 8 threads (`target/release/rose`, pure-Rust `noodles` + `zlib-rs`, z
 |---|---|---|---|
 | **CUT&RUN (`--assay cutrun -s auto`)** | `8M` reads, `15,000` peaks | **`2.20 s`** | **`68.1 MiB`** |
 | **ChIP-seq (no control)** | `30M` ChIP reads, `20,020` peaks | **`5.71 s`** | **`74.2 MiB`** |
-| **ChIP-seq + Input (`-s auto`)** | `30M` ChIP + `30M` Input (`60M` reads), `20,020` peaks | **`9.41 s`** *(vs. 5–45 min in legacy ROSE)* | **`73.9 MiB`** |
+| **ChIP-seq + Input (`-s auto`)** | `30M` ChIP + `30M` Input (`60M` reads), `20,020` peaks | **`9.41 s`** | **`73.9 MiB`** |
 | **ChIP-seq + Input + `--cn-correct` + `--stability 200`** | `30M` ChIP + `30M` Input (`60M` reads), `20,020` peaks | **`9.55 s`** | **`79.9 MiB`** |
 | **`rose multi` 4-sample cohort (`-s auto`)** | `4 × (30M ChIP + 30M Input)` (`240M` reads) | **`35.18 s` (`8.80 s / sample`)** | **`112.9 MiB`** |
 
@@ -162,6 +162,15 @@ mkdir -p ~/.agents/skills/rose-rs && cp SKILL.md ~/.agents/skills/rose-rs/
 
 ---
 
+## Citation
+
+If you use `rose-rs`, please cite the papers that introduced ROSE and super-enhancers:
+
+- Whyte WA, et al. Master transcription factors and mediator establish super-enhancers at key cell identity genes. *Cell* 153, 307–319 (2013).
+- Lovén J, et al. Selective inhibition of tumor oncogenes by disruption of super-enhancers. *Cell* 153, 320–334 (2013).
+
+and, for the copy-number and bigWig features, Boeva V, et al. *Nature Genetics* 49, 1408–1413 (2017) (LILY).
+
 ## License
 
-MIT License (clean-room Rust implementation; see `PORTING.md` for detailed algorithmic correspondence and verification metrics).
+MIT License (see `LICENSE`). This is a clean-room Rust implementation; see `PORTING.md` for the algorithmic correspondence with ROSE. The embedded DejaVu Sans font used for plots is distributed under its own licence (`crates/rose-cli/assets/DejaVuSans-LICENSE.txt`).
