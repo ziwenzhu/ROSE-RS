@@ -1,0 +1,20 @@
+[package]
+name = "rose-io"
+description = "Genomic file parsers, BAM/CRAM/bigWig readers, and atomic table writers for rose-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rose-core.workspace = true
+noodles.workspace = true
+flate2.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

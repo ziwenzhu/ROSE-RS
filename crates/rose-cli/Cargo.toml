@@ -1,0 +1,24 @@
+[package]
+name = "rose-cli"
+description = "Command-line interface and hockey-stick plotter for rose-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rose"
+path = "src/main.rs"
+
+[dependencies]
+rose-core.workspace = true
+rose-io.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+plotters.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
