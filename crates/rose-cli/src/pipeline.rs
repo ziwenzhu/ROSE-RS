@@ -148,6 +148,7 @@ fn build_bam_config(
         downsample_fractions,
         seed: call.seed,
         collect_cn_bin_size: collect_cn_bin,
+        reference_fasta: sig.reference.clone(),
     }
 }
 
@@ -592,7 +593,21 @@ fn exec_run(args: RunArgs, raw_args: Vec<String>) -> Result<()> {
         None
     };
 
-    let elem_regs = piecewise_idx.elementary_regions();
+    // Under `--compat rose`, ROSE counts only bases strictly inside each stitched locus, which is
+    // not additive across peak/gap pieces. Quantify the active regions directly in the same pass
+    // (appended after the pieces) so the primary tables match ROSE exactly; the sensitivity sweep
+    // and stability tiers keep using the pieces.
+    let direct_regions: Vec<StitchedRegion> = if compat == CompatMode::RoseLegacy {
+        let mut active_cfg = stitch_cfg.clone();
+        active_cfg.stitch_distance = active_stitch_bp;
+        stitch_constituents(&constituents, annot_opt.as_ref(), &blacklist, &active_cfg)?.0
+    } else {
+        Vec::new()
+    };
+    let n_elem = piecewise_idx.elementary_regions().len();
+    let mut quant_regs: Vec<StitchedRegion> = piecewise_idx.elementary_regions().to_vec();
+    quant_regs.extend(direct_regions.iter().cloned());
+    let elem_regs = quant_regs.as_slice();
     let treat_q = quantify_track(
         &args.rankby,
         elem_regs,
@@ -651,7 +666,27 @@ fn exec_run(args: RunArgs, raw_args: Vec<String>) -> Result<()> {
         cn_profile_opt.as_ref(),
     )?;
     let regions = mat.regions;
-    let items = mat.signals;
+    let mut items = mat.signals;
+    if !direct_regions.is_empty() {
+        let direct_idx: BTreeMap<&str, usize> = direct_regions
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (r.id.as_str(), n_elem + i))
+            .collect();
+        for it in &mut items {
+            let Some(&qi) = direct_idx.get(it.region.id.as_str()) else {
+                bail!(
+                    "internal error: region '{}' missing from direct quantification",
+                    it.region.id
+                );
+            };
+            (it.treat_density, it.treat_signal) = treat_q.signals[qi];
+            if let Some(cq) = &ctrl_q {
+                it.ctrl_density = Some(cq.signals[qi].0);
+                it.ctrl_signal = Some(cq.signals[qi].1);
+            }
+        }
+    }
     let treat_downsampled = mat.downsampled_totals;
     let ctrl_downsampled = if args.call_opts.stability > 0 {
         if let Some(cq) = &ctrl_q {

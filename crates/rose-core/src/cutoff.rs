@@ -410,3 +410,34 @@ pub fn call_super_enhancers(items: &[RegionSignal], cfg: &CallConfig) -> CallRes
         sorted_signals_asc,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_cutoff_finds_the_elbow() {
+        // Flat background with a sharp rise at the end: only the last two are super-enhancers.
+        let mut sig: Vec<f64> = (1..=20).map(f64::from).collect();
+        sig.extend([500.0, 900.0]);
+        let s = compute_cutoff_on_slice(&sig, CutoffMethod::Exact, 0, CompatMode::Clean);
+        assert_eq!(s.num_super_enhancers, 2);
+        assert!((s.cutoff_signal - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn flat_signal_calls_nothing() {
+        let s = compute_cutoff_on_slice(&[5.0; 10], CutoffMethod::Exact, 0, CompatMode::Clean);
+        assert_eq!(s.num_super_enhancers, 0);
+    }
+
+    #[test]
+    fn brent_matches_exact_on_a_clear_elbow() {
+        let mut sig: Vec<f64> = (1..=200).map(|i| f64::from(i) * 0.1).collect();
+        sig.extend([300.0, 400.0, 800.0]);
+        let a = compute_cutoff_on_slice(&sig, CutoffMethod::Exact, 0, CompatMode::RoseLegacy);
+        let b = compute_cutoff_on_slice(&sig, CutoffMethod::RoseCompat, 0, CompatMode::RoseLegacy);
+        assert_eq!(a.num_super_enhancers, 3);
+        assert_eq!(b.num_super_enhancers, 3);
+    }
+}

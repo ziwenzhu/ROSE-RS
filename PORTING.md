@@ -22,16 +22,15 @@ This document maps original Young Lab **ROSE** (`bitbucket.org/young_computation
 
 ## 2. Test & Validation Mapping
 
-| Validation Target (`PLAN.md` §10) | `rose-rs` Test Suite | What Is Verified |
+| Validation target (`PLAN.md` §10) | Test | What is verified |
 |---|---|---|
-| §10.1 Golden `--compat rose` parity (`M0`–`M4`) | `crates/rose-io/tests/golden_and_pipeline_tests.rs::test_m0_m4_golden_rose_compat_end_to_end` | Exact parity against Young Lab ROSE logic + unmodified R 4.6.1 `ROSE_callSuper.R` on `tests/golden/` (`28` regions, `PROMO_PEAK_1` TSS drop, `MULTITSS` disaggregation, `chrY` drop, 4-decimal signals, `762650.7858` Brent cutoff, `4` super-enhancers, `MYC` & `RERE` gene mapping) |
-| §10.2 Coordinate, stitching & difference-array invariants | `crates/rose-core/tests/property_tests.rs` & `test_m1_bed_vs_gff_equivalence` | `proptest` suites comparing `SignalScratch` + multi-tier downsampling against a brute-force per-base oracle, connected-component stitching invariants, base-exact `PromoterMode::Subtract`, and 0-based BED == 1-based GFF equivalence |
-| §10.3 & §10.4 Paired-end BAM, CIGAR & CUT&RUN | `test_m2_m10_paired_end_fragments_cigar_and_cutrun_filters` & `cli_e2e_tests.rs` | `750 bp` proper pair starting `550 bp` upstream counted once (`200 bp` overlap), `1400 bp` & `0x400` duplicate excluded, `36M4D10S` CIGAR span (`40 bp`), `@PG` dedup check, indexed vs streaming parity, `--compare-control` |
-| §10.4 BigWig & LILY outlier options (`M6`) | `test_m6_bigwig_width_weighted_and_outlier_controls` | Binary `.bw` roundtrip verifying width-weighted `900*2 + 100*50 = 6800` vs unweighted `26.0`, `--drop-top 1` artifact protection, and `--min-se` |
-| §10.5 Multi-sample cohort (`M7`) | `test_m7_multi_sample_consensus_deseq2_and_self_comparison` & `cli_e2e_tests.rs` | 1-sample `multi == run` identity, noisy multi-sample consensus merging without count inflation, zero-inflated DESeq2 median-of-ratios (`2.0x`), and `0` gained / `0` lost on self-comparison |
-| §10.6 Stability report (`M8`) | `test_m8_stability_determinism_and_downsampling` | Bit-exact determinism across runs per `--seed` (`SplitMix64` + `xxh3_64`) across both `floor = 0` and `floor = 1` |
-| §10.7 Copy-number correction (`M9`) | `test_m9_copy_number_correction_recovers_true_ranking` | Synthetic `5x` ChIP + Input focal amplification + `0`-read centromeric gap bins recovering true ranking via `--cn-correct` and `.seg` `--cn-segments`, plus `InsufficientControlDepth` safeguard on shallow IgG |
-| §10.8 Edge cases & atomic I/O | `test_section_10_8_edge_cases` & `cli_e2e_tests.rs` | Flat `0`-SE signal, all-zero plateau (`1` SE), `chr1` <-> `1` Ensembl reconciliation, `< 50%` `ContigMismatch`, `MissingIndex`, `DuplicateRegionId`, exon-only UCSC GTF fallback, `0..=1000` BED scores, and Gateway BED rerun idempotency |
+| §10.1 `--compat rose` parity | `crates/rose-cli/tests/golden.rs::compat_rose_region_map_matches_rose_reference` | Stitched regions, names and ranking/control signal of `run --compat rose` equal `tests/golden/expected_rose_region_map.tsv` (relative error < 1e-6). The expected table comes from `tests/golden/rose_reference.py`, an independent re-implementation of ROSE 0.1's stitching and `ROSE_bamToGFF.py` counting rules, not from running the original Python 2 / R / samtools pipeline. |
+| §10.3 Signal kernel | `rose-io` `bam::tests`, `rose-core` `signal::tests`; `golden.rs::nested_region_does_not_steal_reads_from_enclosing_region` | Overlap scan with nested regions; legacy strict-interior counting and floor handling |
+| §10.3 CRAM | `golden.rs::cram_with_reference_matches_bam`, `cram_without_reference_is_a_clean_error` | CRAM decoded with `--reference` equals BAM; missing reference is an error, not a panic |
+| §10.2 Stitching | `rose-core` `stitch::tests` | Distance stitching and naming, single-peak multi-TSS un-stitching, duplicate IDs rejected |
+| Cutoff | `rose-core` `cutoff::tests` | Exact scan and R Brent port on simple curves |
+
+Not yet covered by tests in this repository: a run of the original ROSE scripts (M0), bigWig (M6), `rose multi` (M7), stability (M8), copy-number correction (M9) and public CUT&RUN data (M10). Regenerate the fixture with `python3 tests/golden/make_fixture.py tests/golden` (needs `pysam`).
 
 ---
 
@@ -49,7 +48,8 @@ This document maps original Young Lab **ROSE** (`bitbucket.org/young_computation
 
 Do **not** alter these behaviors in `CompatMode::RoseLegacy` — golden regression tests depend on them:
 - **Post-stitching multi-TSS disaggregation (`ROSE_main.py:101, 113`):** Checks `±50 bp` around `txStart` (`+`) / `txEnd` (`-`) and un-stitches strictly when `> 2` (`>= 3`) distinct gene symbols overlap (even though ROSE's inline comment says "2").
-- **Depth floor summation (`ROSE_bamToGFF.py:113, 135`):** With `floor = 1`, bases with `depth > 1` (`depth >= 2`) contribute their **full `depth`** (not `depth - 1`).
+- **Depth floor summation (`ROSE_bamToGFF.py:113, 135`):** With `floor = 1`, bases with `depth > 1` (`depth >= 2`) contribute their **full `depth`** (not `depth - 1`). Clean mode uses the same rule.
+- **Read and region coordinates (`ROSE_utils.py::readsToLoci`, `ROSE_bamToGFF.py:115`):** each read is the closed locus `[POS, POS + len(SEQ)]` (`len + 1` bases) before the 200 bp extension, and only bases strictly inside the GFF locus (`start < x < end`) are counted, while density is divided by `end - start`. Because this is not additive across stitch pieces, `run --compat rose` quantifies the active stitched regions directly; the sensitivity sweep and stability tiers still use the pieces.
 - **4-decimal intermediate rounding (`ROSE_bamToGFF.py:40, 136`):** `MMR = round(idxstats_mapped / 1e6, 4)` and `density = round((bp_sum / width) / MMR, 4)` before multiplying by `width`.
 - **Brent Step-Function Cutoff (`ROSE_callSuper.R:6-31, 159`):** Uses `slope = (max - min) / n`, golden-section + parabolic interpolation (`stats::optimize` on `[1, n]`, `tol = eps^0.25`), `floor(minimum)` index, and strict inequality `signal > cutoff`.
 - **First-Row RefSeq Deduplication & `chrY` Drop:** Keeps the first row encountered per RefSeq ID in `*.ucsc` and strips `chrY` regions prior to ranking.
@@ -60,7 +60,7 @@ Do **not** alter these behaviors in `CompatMode::RoseLegacy` — golden regressi
 
 ### End-to-End Scale Benchmark (`PLAN.md` §3 & M5)
 
-Measured on `target/release/rose.exe` (`--threads 8`, pure-Rust `noodles 0.119` + `flate2` `zlib-rs` backend, thin LTO) across `20,020` constituent peaks (`22` human autosomes spanning `2.97 Gb`), `30,000,014` mapped ChIP alignments + `30,000,014` mapped Input alignments (`60M` total BAM records), full `58,350`-transcript human `hg38_refseq.ucsc` annotation, and full table + BED + SVG/PNG plot generation:
+Measured by the author on `target/release/rose.exe` (`--threads 8`, pure-Rust `noodles 0.119` + `flate2` `zlib-rs` backend, thin LTO) across `20,020` constituent peaks (`22` human autosomes spanning `2.97 Gb`), `30,000,014` mapped ChIP alignments + `30,000,014` mapped Input alignments (`60M` total BAM records), full `58,350`-transcript human `hg38_refseq.ucsc` annotation, and full table + BED + SVG/PNG plot generation:
 
 | Workload (`0..=25 kb` stitch sensitivity sweep active on all runs) | `PLAN.md` §3 Target | Measured Wall Time (`8` threads) | Peak Working Set RSS |
 |---|---|---|---|
@@ -72,18 +72,9 @@ Measured on `target/release/rose.exe` (`--threads 8`, pure-Rust `noodles 0.119` 
 
 *Note on `noodles` (`zlib-rs`) vs optional C `htslib` (`PLAN.md` M5):* Because pure-Rust `noodles` + `zlib-rs` + BGZF seek-vs-stream auto-switching (`<= 512` coalesced windows) already achieves **`7.91 s` / `8.22 s`** (`~44–52 MiB` RSS) with zero C compiler or FFI `unsafe` code, the optional `htslib` C binding is unnecessary by empirical benchmark data, preserving `#![forbid(unsafe_code)]` across the entire workspace.
 
-### Criterion Micro-Benchmarks (`crates/rose-core/benches/signal_and_stitch.rs`)
-
-| Kernel | Median Time |
-|---|---|
-| `signal_floor0_5k_reads` ($O(1)$ interval overlap, 5,000 reads) | **`4.09 µs`** |
-| `signal_floor1_diffarray_5k_reads` (difference-array prefix sum, 5,000 reads on 25 kb SE) | **`26.78 µs`** |
-| `cutoff_exact_15k` (sort + exact chord-tangent scan, 15,000 enhancers) | **`96.63 µs`** |
-| `stitch_20k_peaks` (20,000 genome-wide peaks -> stitched loci) | **`27.64 ms`** |
-
 ### Quality Gates Executed
 
 - `cargo fmt --all -- --check` — `0` formatting diffs
 - `cargo clippy --offline --workspace --all-targets -- -D warnings` — `0` warnings (`#![forbid(unsafe_code)]`, `clippy::unwrap_used = "deny"`)
-- `cargo test --offline --workspace` — `15/15` unit, `proptest` property, golden parity, and CLI e2e suites passing
+- `cargo test --workspace` — unit tests in `rose-core` and `rose-io`, plus the CLI golden tests in `crates/rose-cli/tests/golden.rs`
 - `RUSTDOCFLAGS="-D warnings" cargo doc --offline --workspace --no-deps` — `0` rustdoc warnings
