@@ -22,7 +22,7 @@ This document maps original Young Lab **ROSE** (`bitbucket.org/young_computation
 
 ## 2. Test & Validation Mapping
 
-| Validation target (`PLAN.md` §10) | Test | What is verified |
+| Validation target | Test | What is verified |
 |---|---|---|
 | §10.1 `--compat rose` parity | `crates/rose-cli/tests/golden.rs::compat_rose_region_map_matches_rose_reference` | Stitched regions, names and ranking/control signal of `run --compat rose` equal `tests/golden/expected_rose_region_map.tsv` (relative error < 1e-6). The expected table comes from `tests/golden/rose_reference.py`, an independent re-implementation of ROSE 0.1's stitching and `ROSE_bamToGFF.py` counting rules, not from running the original Python 2 / R / samtools pipeline. |
 | §10.3 Signal kernel | `rose-io` `bam::tests`, `rose-core` `signal::tests`; `golden.rs::nested_region_does_not_steal_reads_from_enclosing_region` | Overlap scan with nested regions; legacy strict-interior counting and floor handling |
@@ -58,11 +58,11 @@ Do **not** alter these behaviors in `CompatMode::RoseLegacy` — golden regressi
 
 ## 5. Verification & Performance Benchmarks
 
-### End-to-End Scale Benchmark (`PLAN.md` §3 & M5)
+### End-to-End Scale Benchmark
 
 Measured by the author on `target/release/rose.exe` (`--threads 8`, pure-Rust `noodles 0.119` + `flate2` `zlib-rs` backend, thin LTO) across `20,020` constituent peaks (`22` human autosomes spanning `2.97 Gb`), `30,000,014` mapped ChIP alignments + `30,000,014` mapped Input alignments (`60M` total BAM records), full `58,350`-transcript human `hg38_refseq.ucsc` annotation, and full table + BED + SVG/PNG plot generation:
 
-| Workload (`0..=25 kb` stitch sensitivity sweep active on all runs) | `PLAN.md` §3 Target | Measured Wall Time (`8` threads) | Peak Working Set RSS |
+| Workload (`0..=25 kb` stitch sensitivity sweep active on all runs) | Target | Measured Wall Time (`8` threads) | Peak Working Set RSS |
 |---|---|---|---|
 | CUT&RUN (`8M` reads, `15k` peaks, `--assay cutrun -s auto -t 2500`) | — | **`2.20 s`** | **`68.05 MiB`** |
 | ChIP-seq single track (`30M` reads, `20,020` peaks, `-t 2500`) | — | **`5.71 s`** | **`74.23 MiB`** |
@@ -70,7 +70,7 @@ Measured by the author on `target/release/rose.exe` (`--threads 8`, pure-Rust `n
 | ChIP + Input + `--cn-correct` + `--stability 200` (`5`-tier `xxh3` downsampling) | `< 30.0 s` | **`9.55 s`** | **`79.91 MiB`** |
 | `rose multi` 4-sample cohort (`240M` total reads, `-s auto --min-peak-samples 2`) | — | **`35.18 s` (`8.80 s / sample`)** | **`112.87 MiB`** |
 
-*Note on `noodles` (`zlib-rs`) vs optional C `htslib` (`PLAN.md` M5):* Because pure-Rust `noodles` + `zlib-rs` + BGZF seek-vs-stream auto-switching (`<= 512` coalesced windows) already achieves **`7.91 s` / `8.22 s`** (`~44–52 MiB` RSS) with zero C compiler or FFI `unsafe` code, the optional `htslib` C binding is unnecessary by empirical benchmark data, preserving `#![forbid(unsafe_code)]` across the entire workspace.
+*Note on `noodles` (`zlib-rs`) vs optional C `htslib`:* Because pure-Rust `noodles` + `zlib-rs` + BGZF seek-vs-stream auto-switching (`<= 512` coalesced windows) already achieves **`7.91 s` / `8.22 s`** (`~44–52 MiB` RSS) with zero C compiler or FFI `unsafe` code, the optional `htslib` C binding is unnecessary by empirical benchmark data, preserving `#![forbid(unsafe_code)]` across the entire workspace.
 
 ### Quality Gates Executed
 
