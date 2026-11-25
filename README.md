@@ -29,12 +29,24 @@ ROSE-RS/
 └── crates/
     ├── rose-core/              # Pure I/O-free algorithms: intervals, TSS, stitch, stitch_sweep, signal, cutoff, genes, stability, CN, multi
     ├── rose-io/                # BAM/CRAM (noodles), pure-Rust BigWig v4, BED/narrowPeak/broadPeak/GFF/GTF/refGene, atomic TSV/BED writers
-    └── rose-cli/               # `rose` CLI subcommands, rayon orchestration, static-safe SVG & PNG hockey-stick plots
+    └── rose-cli/               # `rose-rs` package: `rose` CLI subcommands, rayon orchestration, static-safe SVG & PNG hockey-stick plots
 ```
 
 ---
 
 ## Quick Start
+
+### Install
+
+Download a prebuilt `rose` binary for Linux, macOS or Windows from the
+[latest release](https://github.com/ziwenzhu/ROSE-RS/releases/latest). Each
+archive has a `.sha256` checksum next to it. Or install from source with Rust
+1.91 or newer:
+
+```bash
+cargo install --locked --git https://github.com/ziwenzhu/ROSE-RS --tag v1.0.0 rose-rs
+rose --version
+```
 
 ### Build from Source
 
@@ -42,6 +54,8 @@ ROSE-RS/
 cargo build --release
 # Binary produced at target/release/rose (or target\release\rose.exe on Windows)
 ```
+
+Changes between versions are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ### Standard ChIP-seq Super-Enhancer Run
 
