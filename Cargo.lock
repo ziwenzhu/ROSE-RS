@@ -868,22 +868,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "rose-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "plotters",
- "rayon",
- "rose-core",
- "rose-io",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "rose-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "thiserror",
@@ -892,7 +878,7 @@ dependencies = [
 
 [[package]]
 name = "rose-io"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "flate2",
  "noodles",
@@ -902,6 +888,20 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror",
+]
+
+[[package]]
+name = "rose-rs"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "plotters",
+ "rayon",
+ "rose-core",
+ "rose-io",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

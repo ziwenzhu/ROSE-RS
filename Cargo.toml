@@ -7,7 +7,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.91"
 license = "MIT"
@@ -18,8 +18,8 @@ keywords = ["bioinformatics", "chip-seq", "super-enhancer", "rose", "genomics"]
 categories = ["science", "command-line-utilities"]
 
 [workspace.dependencies]
-rose-core = { path = "crates/rose-core" }
-rose-io = { path = "crates/rose-io" }
+rose-core = { path = "crates/rose-core", version = "1.0.0" }
+rose-io = { path = "crates/rose-io", version = "1.0.0" }
 noodles = { version = "0.119", features = ["bam", "bgzf", "cram", "csi", "fasta", "sam", "core"] }
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 rayon = "1.10"
@@ -46,3 +46,4 @@ unimplemented = "deny"
 opt-level = 3
 lto = "thin"
 codegen-units = 1
+strip = true
