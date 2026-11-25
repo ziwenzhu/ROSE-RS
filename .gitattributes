@@ -1,2 +1,3 @@
 tests/golden/** -text
 *.ttf binary
+tests/golden/*.py linguist-detectable=false
