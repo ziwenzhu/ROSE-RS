@@ -9,6 +9,13 @@ releases.
 
 ## [Unreleased]
 
+### Changed
+
+- Hockey-stick plots use the README palette (navy typical enhancers, coral
+  super-enhancers), drop minor gridlines, shade the super-enhancer zone, label
+  the cutoff and rank guide lines, print axis numbers with thousands separators,
+  and show track names without `.bam`, `.cram` or bigWig extensions.
+
 ## [1.0.0] - 2026-11-25
 
 First public release.

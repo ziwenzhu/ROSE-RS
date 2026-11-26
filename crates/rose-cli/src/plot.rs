@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result};
 use plotters::prelude::*;
 use plotters::style::register_font;
+use plotters::style::text_anchor::{HPos, Pos, VPos};
 use rose_core::CallResult;
 use rose_io::write_atomic_bytes;
 
@@ -64,6 +65,39 @@ pub fn render_hockey_stick_plots(
     Ok(())
 }
 
+// Palette shared with the README figures: dark navy text and typical enhancers, coral-red
+// super-enhancers.
+const NAVY: RGBColor = RGBColor(0x17, 0x2B, 0x46);
+const CORAL: RGBColor = RGBColor(0xE2, 0x65, 0x66);
+const GUIDE: RGBColor = RGBColor(0x8A, 0x94, 0xA3);
+const GRID: RGBColor = RGBColor(0xE6, 0xE9, 0xEE);
+
+/// Strips common alignment / track extensions so plot text reads `H3K27ac`, not `H3K27ac.bam`.
+fn display_label(name: &str) -> &str {
+    const EXTS: [&str; 6] = [".bam", ".cram", ".bigwig", ".bigWig", ".bw", ".sam"];
+    EXTS.iter()
+        .find_map(|ext| name.strip_suffix(ext))
+        .filter(|s| !s.is_empty())
+        .unwrap_or(name)
+}
+
+/// Formats an axis value as a whole number with thousands separators (`12,500`).
+fn fmt_thousands(v: f64) -> String {
+    let n = v.round() as i64;
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    if n < 0 {
+        out.insert(0, '-');
+    }
+    out
+}
+
 fn draw_chart<DB: DrawingBackend>(
     backend: DB,
     treat_label: &str,
@@ -73,8 +107,9 @@ fn draw_chart<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static,
 {
+    let err = |e| anyhow::anyhow!("{e:?}");
     let root = backend.into_drawing_area();
-    root.fill(&WHITE).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    root.fill(&WHITE).map_err(err)?;
 
     let n = call.sorted_signals_asc.len();
     let x_max = (n.max(1) as f64) * 1.03;
@@ -86,52 +121,76 @@ where
         .max(1.0);
     let y_max = y_max_raw * 1.08;
 
+    let treat = display_label(treat_label);
     let y_desc = match ctrl_label {
-        Some(c) => format!("{treat_label} Signal - {c}"),
-        None => format!("{treat_label} Signal"),
+        Some(c) => format!("{treat} signal \u{2212} {}", display_label(c)),
+        None => format!("{treat} signal"),
     };
+    let n_super = call.summary.num_super_enhancers;
     let caption = format!(
-        "{treat_label} Enhancers (Cutoff: {:.1}, Super-Enhancers: {})",
-        call.summary.cutoff_signal, call.summary.num_super_enhancers
+        "{treat} enhancers: {n_super} super-enhancer{}",
+        if n_super == 1 { "" } else { "s" }
     );
 
+    let text = |size: u32| ("sans-serif", size).into_font().color(&NAVY);
+
     let mut chart = ChartBuilder::on(&root)
-        .caption(caption, ("sans-serif", 18).into_font())
+        .caption(caption, text(18))
         .margin(24)
         .x_label_area_size(44)
-        .y_label_area_size(68)
+        .y_label_area_size(92)
         .build_cartesian_2d(0.0..x_max, 0.0..y_max)
-        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        .map_err(err)?;
+
+    if n > 0 {
+        // Light coral band over the super-enhancer ranks, drawn first so the grid and curve sit on top.
+        let x_cut = call.summary.tangent_index_1based as f64;
+        chart
+            .draw_series(std::iter::once(Rectangle::new(
+                [(x_cut, 0.0), (x_max, y_max)],
+                CORAL.mix(0.10).filled(),
+            )))
+            .map_err(err)?;
+    }
 
     chart
         .configure_mesh()
-        .x_desc("Enhancers Ranked by Signal (Ascending)")
+        .x_desc("Enhancers ranked by signal")
         .y_desc(y_desc)
-        .label_style(("sans-serif", 13).into_font())
-        .light_line_style(RGBColor(240, 240, 240))
+        .label_style(text(13))
+        .axis_desc_style(text(14))
+        .axis_style(NAVY)
+        .bold_line_style(GRID)
+        .light_line_style(TRANSPARENT)
+        .x_label_formatter(&|v| fmt_thousands(*v))
+        .y_label_formatter(&|v| fmt_thousands(*v))
         .draw()
-        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        .map_err(err)?;
 
     if n > 0 {
         let cutoff = call.summary.cutoff_signal;
         let x_cut = call.summary.tangent_index_1based as f64;
+        let guide = GUIDE.stroke_width(1);
 
-        // Horizontal and vertical dashed-style reference lines at `(x_cut, cutoff)`
+        // Dashed reference lines through the tangent point `(x_cut, cutoff)`.
         chart
-            .draw_series(LineSeries::new(
+            .draw_series(DashedLineSeries::new(
                 vec![(0.0, cutoff), (x_max, cutoff)],
-                RGBColor(150, 150, 150).stroke_width(1),
+                6,
+                4,
+                guide,
             ))
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-
+            .map_err(err)?;
         chart
-            .draw_series(LineSeries::new(
+            .draw_series(DashedLineSeries::new(
                 vec![(x_cut, 0.0), (x_cut, y_max)],
-                RGBColor(150, 150, 150).stroke_width(1),
+                6,
+                4,
+                guide,
             ))
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            .map_err(err)?;
 
-        // Sliding diagonal tangent line `y = slope * x + b` clipped to `[0, y_max]`
+        // Tangent line `y = slope * x + b` clipped to `[0, y_max]`.
         if call.summary.slope > 0.0 {
             let slope = call.summary.slope;
             let intercept = cutoff - slope * x_cut;
@@ -139,18 +198,79 @@ where
             let x1 = ((y_max - intercept) / slope).clamp(0.0, x_max);
             if x1 > x0 {
                 chart
-                    .draw_series(LineSeries::new(
+                    .draw_series(DashedLineSeries::new(
                         vec![
                             (x0, (slope * x0 + intercept).max(0.0)),
                             (x1, (slope * x1 + intercept).min(y_max)),
                         ],
-                        RGBColor(180, 60, 60).stroke_width(1),
+                        3,
+                        3,
+                        CORAL.stroke_width(1),
                     ))
-                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                    .map_err(err)?;
             }
         }
 
-        // Typical enhancers curve (dark slate) + super-enhancers curve (crimson red)
+        // Labels for the guides and the shaded zone, anchored to data points and offset in pixels.
+        let label =
+            |txt: String, at: (f64, f64), dx: i32, dy: i32, color: RGBColor, h: HPos, v: VPos| {
+                EmptyElement::at(at)
+                    + Text::new(
+                        txt,
+                        (dx, dy),
+                        ("sans-serif", 12)
+                            .into_font()
+                            .color(&color)
+                            .pos(Pos::new(h, v)),
+                    )
+            };
+        let band_px = chart.backend_coord(&(x_max, 0.0)).0 - chart.backend_coord(&(x_cut, 0.0)).0;
+        chart
+            .draw_series([
+                label(
+                    format!("Cutoff {}", fmt_thousands(cutoff)),
+                    (0.0, cutoff),
+                    6,
+                    -4,
+                    NAVY,
+                    HPos::Left,
+                    VPos::Bottom,
+                ),
+                label(
+                    format!("Rank {}", fmt_thousands(x_cut)),
+                    (x_cut, y_max),
+                    -6,
+                    6,
+                    NAVY,
+                    HPos::Right,
+                    VPos::Top,
+                ),
+                // Inside the band when it is wide enough, otherwise stacked under the rank label.
+                if band_px >= 110 {
+                    label(
+                        "Super-enhancers".to_owned(),
+                        (x_cut, y_max),
+                        6,
+                        6,
+                        CORAL,
+                        HPos::Left,
+                        VPos::Top,
+                    )
+                } else {
+                    label(
+                        "Super-enhancers \u{2192}".to_owned(),
+                        (x_cut, y_max),
+                        -6,
+                        22,
+                        CORAL,
+                        HPos::Right,
+                        VPos::Top,
+                    )
+                },
+            ])
+            .map_err(err)?;
+
+        // Typical enhancers curve (navy) + super-enhancers curve (coral).
         let typical_pts: Vec<(f64, f64)> = call
             .sorted_signals_asc
             .iter()
@@ -170,17 +290,17 @@ where
             chart
                 .draw_series(LineSeries::new(
                     typical_pts.iter().copied(),
-                    RGBColor(75, 85, 99).stroke_width(2),
+                    NAVY.stroke_width(2),
                 ))
-                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                .map_err(err)?;
         }
         if !super_pts.is_empty() {
             chart
                 .draw_series(LineSeries::new(
                     super_pts.iter().copied(),
-                    RGBColor(220, 38, 38).stroke_width(3),
+                    CORAL.stroke_width(3),
                 ))
-                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                .map_err(err)?;
 
             // Subsample up to 250 scatter circles on super-enhancers so dense cohorts stay crisp
             let step = (super_pts.len() / 250).max(1);
@@ -189,12 +309,35 @@ where
                     super_pts
                         .iter()
                         .step_by(step)
-                        .map(|&(x, y)| Circle::new((x, y), 3, RGBColor(220, 38, 38).filled())),
+                        .map(|&(x, y)| Circle::new((x, y), 3, CORAL.filled())),
                 )
-                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                .map_err(err)?;
         }
     }
 
-    root.present().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    root.present().map_err(err)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_label, fmt_thousands};
+
+    #[test]
+    fn labels_drop_track_extensions() {
+        assert_eq!(display_label("H3K27ac.bam"), "H3K27ac");
+        assert_eq!(display_label("input.cram"), "input");
+        assert_eq!(display_label("sample.bw"), "sample");
+        assert_eq!(display_label("plain"), "plain");
+        assert_eq!(display_label(".bam"), ".bam");
+    }
+
+    #[test]
+    fn thousands_separators() {
+        assert_eq!(fmt_thousands(0.0), "0");
+        assert_eq!(fmt_thousands(999.4), "999");
+        assert_eq!(fmt_thousands(2232.3), "2,232");
+        assert_eq!(fmt_thousands(1_234_567.0), "1,234,567");
+        assert_eq!(fmt_thousands(-12_500.0), "-12,500");
+    }
 }
