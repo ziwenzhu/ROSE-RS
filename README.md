@@ -1,6 +1,16 @@
+<p align="center">
+  <img src="docs/images/hero-banner.png" alt="rose-rs: super-enhancer calling in pure Rust. A chromatin strand with a typical enhancer (two blue nucleosomes) and a super-enhancer (a long run of red, acetylated nucleosomes) upstream of a gene." width="100%">
+</p>
+
 # `rose-rs` — Fast, Self-Contained Super-Enhancer Calling in Pure Rust
 
 `rose-rs` (`rose`) is a clean-room, memory-safe (`#![forbid(unsafe_code)]`), zero-C-dependency Rust reimplementation and extension of the Young Lab **ROSE** (*Rank Ordering of Super-Enhancers*; Whyte et al., *Cell* 2013; Lovén et al., *Cell* 2013) pipeline, incorporating copy-number and bigWig enhancements inspired by **LILY** (Boeva et al., *Nature Genetics* 2017) plus native **CUT&RUN**, **multi-sample cohort**, and **bootstrap/downsampling stability** modes.
+
+## How It Works
+
+![The four stages of rose run: 1 Stitch merges constituent enhancers separated by gaps of up to 12.5 kb; 2 Signal counts reads over each stitched region; 3 Call ranks regions by signal and places a cutoff that separates super-enhancers from typical enhancers; 4 Genes assigns each region to nearby genes.](docs/images/pipeline-schematic.png)
+
+`rose run` chains the four stages in one process. Each stage is also available on its own as `rose stitch`, `rose signal`, `rose call` and `rose genes`.
 
 ---
 
